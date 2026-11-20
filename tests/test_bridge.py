@@ -71,7 +71,6 @@ class T(unittest.IsolatedAsyncioTestCase):
 
     async def test_partial_and_malformed_packets_ignored(self):
         b = await self.start([self.wizbulb(1)])
-        self.send(b, ddp(0, [7, 7]))                 # only 2 of 3 channels
         self.send(b, b"junk"); self.send(b, ddp(0, [1, 2, 3], flags=0x01))   # bad version
         self.send(b, ddp(1_000_000, [1, 2, 3]))      # far outside range
         self.send(b, struct.pack(">BBBBIH", 0x41, 0, 1, 1, 0, 50) + b"abc")  # truncated
@@ -151,6 +150,58 @@ class CyncSocket(unittest.IsolatedAsyncioTestCase):
     async def test_rejection_and_missing_socket_raise(self):
         with self.assertRaises(RuntimeError): await bb.CyncSender("")({"cync_id": 1}, (1, 1, 1))
         with self.assertRaises(OSError): await bb.CyncSender("/nonexistent/x.sock")({"cync_id": 1}, (1, 1, 1))
+
+
+
+
+class StraddleAndSync(unittest.IsolatedAsyncioTestCase):
+    async def test_bulb_split_across_two_packets_still_updates(self):
+        loop = asyncio.get_running_loop(); got = []
+        class W(asyncio.DatagramProtocol):
+            def datagram_received(s, d, a): got.append(json.loads(d))
+        tr, _ = await loop.create_datagram_endpoint(W, local_addr=("127.0.0.1", 0)); wp = tr.get_extra_info("sockname")[1]
+        import tempfile, os
+        p = tempfile.mktemp(); open(p, "w").write(json.dumps({"listen_port": 0, "refresh_seconds": 0, "bulbs": [
+            {"protocol": "wiz", "ip": "127.0.0.1", "port": wp, "channel": 1440}]}))   # indices 1439,1440,1441
+        b = bb.Bridge(bb.load_config(p), log=lambda m: None); os.unlink(p); await b.start()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.sendto(ddp(0, [0] * 1439 + [200]), ("127.0.0.1", b.port))        # R in the first packet
+        s.sendto(ddp(1440, [100, 50]), ("127.0.0.1", b.port))              # G,B in the second
+        await asyncio.sleep(0.5); await b.stop(); tr.close(); s.close()
+        self.assertEqual(got[-1]["params"]["r"], 200); self.assertEqual(got[-1]["params"]["g"], 100)
+        self.assertEqual(got[-1]["params"]["b"], 50)
+
+
+class SyncOutput(unittest.TestCase):
+    def run_sync(self, bulbs, outputs):
+        import tempfile, os
+        sys.path.insert(0, __file__.rsplit("/tests", 1)[0] + "/tools")
+        import importlib; so = importlib.import_module("sync_output")
+        d = tempfile.mkdtemp(); c, o = d + "/c.json", d + "/o.json"
+        open(c, "w").write(json.dumps({"bulbs": bulbs})); open(o, "w").write(json.dumps({"channelOutputs": outputs}))
+        rc, msg = so.sync(c, o); return rc, msg, json.load(open(o))["channelOutputs"], d
+
+    def test_adds_entry_and_keeps_other_outputs(self):
+        other = {"type": "WizMatterBridge", "enabled": 1, "startChannel": 289667, "channelCount": 54}
+        rc, msg, outs, d = self.run_sync([{"channel": 300001}, {"channel": 300010}], [other])
+        self.assertEqual(rc, 0); self.assertEqual(outs[0], other)
+        self.assertEqual(outs[1], {"type": "SmartBulbBridge", "enabled": 1, "startChannel": 300001, "channelCount": 12})
+        import os; self.assertTrue(os.path.exists(d + "/o.json.smartbulb.bak"))
+
+    def test_count_rounded_to_whole_triples_and_idempotent(self):
+        rc, msg, outs, d = self.run_sync([{"channel": 10}, {"channel": 14}], [])      # span 10..16 = 7 -> 9
+        self.assertEqual(outs[0]["channelCount"], 9)
+        sys.path.insert(0, __file__.rsplit("/tests", 1)[0] + "/tools"); import sync_output as so
+        rc2, msg2 = so.sync(d + "/c.json", d + "/o.json"); self.assertIn("already correct", msg2)
+
+    def test_disabled_bulbs_ignored_and_no_bulbs_removes_entry(self):
+        rc, msg, outs, d = self.run_sync([{"channel": 5, "enabled": False}],
+                                         [{"type": "SmartBulbBridge", "enabled": 1, "startChannel": 5, "channelCount": 3}])
+        self.assertEqual(outs, [])
+
+    def test_too_wide_refused_without_changing_file(self):
+        rc, msg, outs, d = self.run_sync([{"channel": 1}, {"channel": 70000}], [])
+        self.assertEqual(rc, 2); self.assertEqual(outs, [])
 
 
 if __name__ == "__main__":

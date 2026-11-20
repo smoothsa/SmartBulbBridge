@@ -196,7 +196,7 @@ class Bridge:
         self.last_packet = time.monotonic()
         for s in self.slots:
             i = s.bulb["channel"] - 1
-            if off <= i and i + 3 <= off + len(data):
+            if off < i + 3 and i < off + len(data):      # packet touches this bulb's R,G,B
                 rgb = tuple(self.buf[i:i + 3])
                 if rgb != s.wanted:
                     s.wanted = rgb

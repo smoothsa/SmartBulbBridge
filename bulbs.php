@@ -48,6 +48,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulbs_json'])) {
         @mkdir(dirname($cfgFile), 0775, true);
         file_put_contents($cfgFile . '.tmp', json_encode($cfg, JSON_PRETTY_PRINT));
         rename($cfgFile . '.tmp', $cfgFile);
+        $syncOut = [];
+        exec('python3 ' . escapeshellarg(dirname(__FILE__) . '/tools/sync_output.py') . ' ' . escapeshellarg($cfgFile)
+             . ' ' . escapeshellarg("$media/config/channeloutputs.json") . ' 2>&1', $syncOut, $syncRc);
+        $syncMsg = trim(implode(' ', $syncOut));
         exec('bash ' . escapeshellarg(dirname(__FILE__) . '/scripts/restart.sh') . ' >/dev/null 2>&1', $out, $rc);
         // wait (up to ~6 s) for the new daemon to write its first status report
         $up = false;
@@ -59,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulbs_json'])) {
         }
         $msg = $up ? 'Saved. The bridge was restarted and is running.'
                    : 'Saved, but the bridge did not report back. See ' . $media . '/logs/fpp-smart-bulbs.log';
+        $msg .= ' ' . $syncMsg;
     }
 }
 $cfg = file_exists($cfgFile) ? (json_decode(file_get_contents($cfgFile), true) ?: []) : [];

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.o
+*.d
+*.so
+*.bak
+*.tgz

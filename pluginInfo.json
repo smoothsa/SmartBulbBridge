@@ -1,0 +1,26 @@
+{
+  "repoName": "SmartBulbBridge",
+  "name": "Smart Bulb Bridge (WiZ / Matter / Cync)",
+  "author": "smoothsa",
+  "description": "Drive individual WiZ, Matter and Cync RGB bulbs from FPP channel data.",
+  "homeURL": "https://github.com/smoothsa/SmartBulbBridge",
+  "srcURL": "https://github.com/smoothsa/SmartBulbBridge.git",
+  "bugURL": "https://github.com/smoothsa/SmartBulbBridge/issues",
+  "allowUpdates": 1,
+  "versions": [
+    {
+      "minFPPVersion": "10.4",
+      "maxFPPVersion": "0",
+      "branch": "main",
+      "sha": ""
+    }
+  ],
+  "dependencies": {
+    "packages": [
+      "python3-websockets"
+    ],
+    "python": [],
+    "plugins": [],
+    "scripts": []
+  }
+}

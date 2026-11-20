@@ -12,15 +12,12 @@
       "minFPPVersion": "10.4",
       "maxFPPVersion": "0",
       "branch": "main",
-      "sha": ""
+      "sha": "",
+      "dependencies": {
+        "packages": [
+          "python3-websockets"
+        ]
+      }
     }
-  ],
-  "dependencies": {
-    "packages": [
-      "python3-websockets"
-    ],
-    "python": [],
-    "plugins": [],
-    "scripts": []
-  }
+  ]
 }

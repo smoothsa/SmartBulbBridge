@@ -19,5 +19,58 @@
         ]
       }
     }
-  ]
+  ],
+  "privacy": {
+    "summary": "Sends the colors FPP is playing to the smart bulbs you configure (WiZ and Matter on your own network; Cync through Cync's cloud service if you set it up). Nothing is sent until you add bulbs.",
+    "sends": [
+      {
+        "to": "the WiZ bulbs at the local IP addresses you enter",
+        "what": "on/off and RGB color commands",
+        "why": "to light the bulbs from your sequence",
+        "alwaysOn": false
+      },
+      {
+        "to": "the Matter server running on this same device (port 5580)",
+        "what": "on/off, color and brightness commands for the Matter bulbs you enter",
+        "why": "to light the bulbs from your sequence",
+        "alwaysOn": false
+      },
+      {
+        "to": "Cync's cloud service (only if you set up Cync bulbs)",
+        "what": "your Cync account sign-in and on/off and RGB color commands",
+        "why": "Cync bulbs can only be controlled through their cloud account",
+        "alwaysOn": false
+      }
+    ],
+    "collects": [
+      {
+        "what": "a log of start/stop messages and bulb send errors",
+        "about": "operator",
+        "keptDays": null,
+        "canDelete": true,
+        "where": "plugin log (media/logs/fpp-smart-bulbs.log)"
+      },
+      {
+        "what": "your Cync email and password, if you set up Cync (never sent anywhere except Cync's sign-in)",
+        "about": "operator",
+        "keptDays": null,
+        "canDelete": true,
+        "where": "plugin data folder, owner-only permissions (media/plugindata/SmartBulbBridge/cync)"
+      }
+    ],
+    "sensors": [],
+    "remoteAccess": "none",
+    "systemChanges": [
+      {
+        "kind": "service",
+        "what": "runs a small background program as the FPP user while FPP is running; it listens only on this device (127.0.0.1)"
+      },
+      {
+        "kind": "core-settings",
+        "what": "adds one SmartBulbBridge entry to FPP's channel outputs when you save bulbs on the plugin page (FPP must be restarted to apply it)"
+      }
+    ],
+    "closedCode": false,
+    "other": "The plugin compiles a small native channel-output library on this device when it is installed. Setting up Cync downloads the open-source pycync library with pip into the plugin's own folder. Matter bulbs need a separate Matter server, which this plugin does not install."
+  }
 }

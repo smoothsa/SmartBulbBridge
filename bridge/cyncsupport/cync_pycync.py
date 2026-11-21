@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import time
 from typing import Any
 
 
@@ -64,15 +65,16 @@ def load_credentials(path: Path) -> dict[str, str]:
     return obj
 
 
-def save_credentials(path: Path, username: str, password: str) -> None:
-    """Atomic 0600 create, never overwrite an existing credential or symlink."""
+def save_credentials(path: Path, username: str, password: str, overwrite: bool = False) -> None:
+    """Atomic 0600 create. Refuses symlinks; refuses to replace an existing file
+    unless overwrite=True (used only by interactive re-enrollment)."""
     path = Path(path)
     _validate_private_parent(path)
     if not isinstance(username, str) or not 1 <= len(username) <= 254:
         raise CyncConfigurationError('Invalid account username')
     if not isinstance(password, str) or not 1 <= len(password) <= 1024:
         raise CyncConfigurationError('Invalid password')
-    if path.exists() or path.is_symlink():
+    if path.is_symlink() or (path.exists() and not overwrite):
         raise CyncConfigurationError('Credentials already exist; refusing overwrite')
     fd, tmp = tempfile.mkstemp(prefix='.cync-credentials-', dir=path.parent)
     try:
@@ -84,17 +86,92 @@ def save_credentials(path: Path, username: str, password: str) -> None:
             os.fsync(out.fileno())
         # Exclusive create, rather than os.replace(), prevents races with other
         # instances and keeps an existing secret from being overwritten.
-        os.link(tmp, path, follow_symlinks=False)
+        if overwrite:
+            os.replace(tmp, path)
+        else:
+            os.link(tmp, path, follow_symlinks=False)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
 
 
+SESSION_KEYS = ('access_token', 'refresh_token', 'authorize', 'user_id', 'expires_at')
+
+
+def load_session(path: Path) -> dict | None:
+    """Return the saved login session, or None if absent/unusable.
+
+    A bad or unsafe file is treated as "no session" so the worker falls back to
+    a password login (which, at worst, asks for re-enrollment).
+    """
+    path = Path(path)
+    try:
+        _validate_private_parent(path)
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0))
+    except (OSError, CyncConfigurationError):
+        return None
+    try:
+        s = os.fstat(fd)
+        if (not stat.S_ISREG(s.st_mode) or s.st_uid != os.geteuid() or
+                stat.S_IMODE(s.st_mode) & 0o077 or s.st_size > 16384):
+            return None
+        with os.fdopen(fd, 'r', encoding='utf-8') as stream:
+            fd = -1
+            obj = json.load(stream)
+    except (OSError, ValueError, UnicodeError):
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if not isinstance(obj, dict) or any(k not in obj for k in SESSION_KEYS):
+        return None
+    if (not isinstance(obj['access_token'], str) or not isinstance(obj['refresh_token'], str) or
+            not obj['access_token'] or not obj['refresh_token'] or
+            not isinstance(obj['expires_at'], (int, float))):
+        return None
+    return {k: obj[k] for k in SESSION_KEYS}
+
+
+def save_session(path: Path, data: dict) -> None:
+    """Atomically replace the session file (0600). Tokens rotate, so this runs often."""
+    path = Path(path)
+    _validate_private_parent(path)
+    if path.is_symlink():
+        raise CyncConfigurationError('Session file must not be a symlink')
+    fd, tmp = tempfile.mkstemp(prefix='.cync-session-', dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as out:
+            out.write(json.dumps({k: data[k] for k in SESSION_KEYS}, separators=(',', ':')))
+            out.write('\n')
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _session_from_user(user) -> dict | None:
+    try:
+        return {'access_token': user.access_token, 'refresh_token': user.refresh_token,
+                'authorize': user.authorize, 'user_id': user.user_id,
+                'expires_at': float(user.expires_at)}
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 class PyCyncBackend:
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: str, password: str, session_path: Path | None = None,
+                 use_saved_session: bool = True):
         if not username or not password:
             raise CyncConfigurationError('Account credentials are required')
         self.username, self.password = username, password
+        # Where the login session (tokens) is kept so a restart does not need a
+        # new emailed code. Tokens rotate, so they are re-saved when they change.
+        self.session_path = Path(session_path) if session_path else None
+        self.use_saved_session = use_saved_session
+        self._saved = None
         self._session = None
         self._auth = None
         self._api = None
@@ -115,21 +192,43 @@ class PyCyncBackend:
             from pycync.exceptions import TwoFactorRequiredError
         except ImportError as exc:
             raise RuntimeError('Optional pycync/aiohttp is not installed in the selected Python runtime') from exc
+        restored = False
         if self._session is None:
             self._session = ClientSession()
             try:
-                self._auth = Auth(self._session, username=self.username,
+                saved = (load_session(self.session_path)
+                         if (self.session_path and self.use_saved_session and code is None) else None)
+                user = None
+                if saved:
+                    from pycync import User
+                    user = User(saved['access_token'], saved['refresh_token'], saved['authorize'],
+                                saved['user_id'],
+                                expire_in=max(1, int(saved['expires_at'] - time.time())))
+                    restored = True
+                self._auth = Auth(self._session, user=user, username=self.username,
                                   password=self.password)
             except Exception:
                 await self.close()
                 raise
         try:
             try:
-                await self._auth.login(code)
+                if not restored:
+                    await self._auth.login(code)
             except TwoFactorRequiredError as exc:
                 # Keep auth and session alive until connect(code) or close().
                 raise CyncTwoFactorRequired('Cync emailed a two-factor code; operator enrollment is required') from exc
-            self._api = await Cync.create(self._auth)
+            try:
+                self._api = await Cync.create(self._auth)
+            except Exception:
+                if not restored:
+                    raise
+                # The saved session was rejected (expired or revoked). Fall back
+                # to a normal login once; if Cync wants a new emailed code the
+                # caller reports "re-enrollment needed" instead of looping.
+                await self.close()
+                self.use_saved_session = False
+                return await self.connect(code)
+            self._persist()
             devices: dict[int, Any] = {}
             discovery: list[dict[str, object]] = []
             for d in self._api.get_devices():
@@ -159,6 +258,22 @@ class PyCyncBackend:
             await self.close()
             raise
 
+    def _persist(self) -> None:
+        """Save the current tokens if they changed (refresh rotates them)."""
+        if not self.session_path or self._auth is None:
+            return
+        data = _session_from_user(getattr(self._auth, 'user', None))
+        if data is None:
+            return
+        key = (data['access_token'], data['refresh_token'])
+        if key == self._saved:
+            return
+        try:
+            save_session(self.session_path, data)
+            self._saved = key
+        except (OSError, CyncConfigurationError):
+            pass  # keep running; worst case is one re-enrollment later
+
     async def apply_rgb(self, device_id: int, rgb: tuple[int, int, int]):
         device = self._devices.get(device_id)
         if device is None:
@@ -168,6 +283,7 @@ class PyCyncBackend:
         else:
             await device.turn_on()
             await device.set_rgb(rgb)
+        self._persist()
         # This is provider-command acceptance, not physical confirmation.
         return 'provider_command_accepted'
 
@@ -175,6 +291,7 @@ class PyCyncBackend:
         # Always close the aiohttp session even if shutdown of a broken
         # provider connection raises. Teardown is idempotent.
         api, self._api = self._api, None
+        self._persist()
         self._auth = None
         session, self._session = self._session, None
         self._devices.clear()

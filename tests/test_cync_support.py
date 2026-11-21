@@ -191,6 +191,134 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(1,worker.applied)
 
 
+
+# ---- saved-session tests (stub pycync/aiohttp, no network) ----
+import sys, types, json, time, stat as _stat
+
+
+def _install_stubs(log):
+    class TwoFactorRequiredError(Exception): pass
+    class User:
+        def __init__(self, access_token, refresh_token, authorize, user_id, expire_in=3600):
+            self.access_token, self.refresh_token = access_token, refresh_token
+            self.authorize, self.user_id = authorize, user_id
+            self.expires_at = time.time() + expire_in
+    class Auth:
+        def __init__(self, session, user=None, username=None, password=None):
+            self.user, self.username, self.password = user, username, password
+            log.append(('auth', user is not None))
+        async def login(self, code=None):
+            log.append(('login', code))
+            if code is None and log.stub_needs_2fa:
+                raise TwoFactorRequiredError()
+            self.user = User('A1', 'R1', 'auth', 7, expire_in=7200)
+            return self.user
+    class Dev:
+        device_id = 1; name = 'Porch'
+        def supports_capability(self, c): return True
+        async def turn_on(self): pass
+        async def turn_off(self): pass
+        async def set_rgb(self, rgb): pass
+    class Api:
+        def __init__(self, auth): self.auth = auth
+        def get_devices(self): return [Dev()]
+        async def shut_down(self): pass
+    class Cync:
+        @staticmethod
+        async def create(auth):
+            if log.stub_reject_session and auth.user and auth.user.access_token == 'OLD':
+                raise RuntimeError('expired')
+            return Api(auth)
+    class ClientSession:
+        async def close(self): pass
+    mods = {
+        'aiohttp': types.ModuleType('aiohttp'), 'pycync': types.ModuleType('pycync'),
+        'pycync.devices': types.ModuleType('pycync.devices'),
+        'pycync.devices.capabilities': types.ModuleType('pycync.devices.capabilities'),
+        'pycync.exceptions': types.ModuleType('pycync.exceptions')}
+    mods['aiohttp'].ClientSession = ClientSession
+    mods['pycync'].Auth, mods['pycync'].Cync, mods['pycync'].User = Auth, Cync, User
+    mods['pycync.devices.capabilities'].CyncCapability = types.SimpleNamespace(RGB_COLOR=1, ON_OFF=2)
+    mods['pycync.exceptions'].TwoFactorRequiredError = TwoFactorRequiredError
+    old = {k: sys.modules.get(k) for k in mods}
+    sys.modules.update(mods)
+    return old
+
+
+class _Log(list):
+    stub_needs_2fa = False
+    stub_reject_session = False
+
+
+class SavedSessionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.log = _Log()
+        self.old = _install_stubs(self.log)
+        self.tmp = tempfile.mkdtemp()
+        os.chmod(self.tmp, 0o700)
+        self.sp = Path(self.tmp) / 'cync-session.json'
+
+    def tearDown(self):
+        for k, v in self.old.items():
+            if v is None: sys.modules.pop(k, None)
+            else: sys.modules[k] = v
+
+    def _backend(self, **kw):
+        from cyncsupport.cync_pycync import PyCyncBackend
+        return PyCyncBackend('u@example.com', 'pw', session_path=self.sp, **kw)
+
+    async def test_login_saves_private_session_then_restart_skips_login(self):
+        b = self._backend()
+        await b.connect()
+        self.assertEqual(_stat.S_IMODE(self.sp.stat().st_mode), 0o600)
+        await b.close()
+        self.log.clear()
+        b2 = self._backend()
+        devs = await b2.connect()
+        self.assertEqual(devs[0]['id'], 1)
+        self.assertNotIn(('login', None), self.log, 'restart must not log in again')
+        self.assertIn(('auth', True), self.log)
+        await b2.close()
+
+    async def test_rotated_tokens_are_saved(self):
+        b = self._backend()
+        await b.connect()
+        b._auth.user.access_token, b._auth.user.refresh_token = 'A2', 'R2'
+        await b.apply_rgb(1, (1, 2, 3))
+        self.assertEqual(json.loads(self.sp.read_text())['refresh_token'], 'R2')
+        await b.close()
+
+    async def test_stale_session_falls_back_to_password_login(self):
+        from cyncsupport.cync_pycync import save_session
+        save_session(self.sp, {'access_token': 'OLD', 'refresh_token': 'OLDR', 'authorize': 'x',
+                               'user_id': 7, 'expires_at': time.time() + 10})
+        self.log.stub_reject_session = True
+        b = self._backend()
+        await b.connect()
+        self.assertIn(('login', None), self.log)
+        self.assertEqual(json.loads(self.sp.read_text())['access_token'], 'A1')
+        await b.close()
+
+    async def test_stale_session_and_2fa_needed_asks_for_enrollment(self):
+        from cyncsupport.cync_pycync import save_session
+        save_session(self.sp, {'access_token': 'OLD', 'refresh_token': 'OLDR', 'authorize': 'x',
+                               'user_id': 7, 'expires_at': time.time() + 10})
+        self.log.stub_reject_session = True
+        self.log.stub_needs_2fa = True
+        with self.assertRaises(CyncTwoFactorRequired):
+            await self._backend().connect()
+
+    def test_unsafe_or_corrupt_session_is_ignored(self):
+        from cyncsupport.cync_pycync import load_session
+        self.assertIsNone(load_session(self.sp))
+        self.sp.write_text('{bad'); os.chmod(self.sp, 0o600)
+        self.assertIsNone(load_session(self.sp))
+        self.sp.write_text(json.dumps({'access_token': 'a', 'refresh_token': 'b', 'authorize': 'c',
+                                       'user_id': 1, 'expires_at': 1}))
+        os.chmod(self.sp, 0o644)
+        self.assertIsNone(load_session(self.sp))
+
+
 if __name__ == '__main__':
     unittest.main()
 

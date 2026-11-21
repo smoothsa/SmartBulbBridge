@@ -25,7 +25,7 @@ and every 30 s the current color is re-sent (recovers bulbs that were power-cycl
 | WiZ bulbs | **Tested** on FPP 10.4 (Raspberry Pi): FPP channel output -> bridge -> bulb |
 | Setup page (add/remove/save, input validation) | **Tested** on FPP 10.4 |
 | Matter bulbs | *Experimental.* The command sequence worked against a real bulb and a local Matter server in a standalone test; it has **not** yet been run through the plugin during playback |
-| Cync bulbs | **Not usable unattended yet.** Sign-in and device discovery were verified on real hardware, but the plugin does not yet save the Cync session, so it asks for a new emailed code every time it starts. Being fixed |
+| Cync bulbs | **Experimental.** Sign-in and device discovery verified on real hardware. The plugin now saves the login session (owner-only file) so restarts should not need a new emailed code. This is covered by offline tests only; not yet proven on real hardware over a long run |
 | Install through the FPP Plugin Manager | **Not yet tested** |
 
 Not included (and not needed for FSEQ playback): making each bulb its own DDP controller in xLights.
@@ -46,14 +46,14 @@ Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/lo
   python3 bridge/cync_setup.py --private-dir $D --prepare-with-network-downloads
   $D/venv/bin/python3 bridge/cync_onboard.py --auth-file $D/auth.json     # asks for email, password, emailed 2FA code
   ```
-  Then add Cync bulbs on the page (device IDs are printed by onboarding). The worker starts with fppd. If Cync demands a new email code it stops (exit 78) instead of retrying; re-run onboarding.
+  Then add Cync bulbs on the page (device IDs are printed by onboarding). The worker starts with fppd. The login session is saved in `cync-session.json` next to `auth.json` and refreshed automatically. If Cync ever demands a new email code (for example after a long outage or a password change) it stops (exit 78) instead of retrying; re-run onboarding.
 - **Port 4051**, not 4049, so it can coexist with an older WizMatterBridge plugin. Don't map the same channels in both.
 
 ## First test (no FPP needed)
 `python3 tools/wiz_test.py BULB_IP 255 0 0` sends red straight to one bulb (`0 0 0` = off; `--discover` finds WiZ bulbs). Do this before anything else.
 
 ## Tests
-`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (7, from the pilot). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
+`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (12, including saved-session restore, token rotation and stale-session fallback). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
 
 ## What has been verified, and what has not
 

@@ -26,7 +26,8 @@ async def run(a):
     allowed = cync_ids(a.config)
     if not allowed:
         raise RuntimeError("no enabled Cync bulbs configured")
-    provider = RecoveringCyncSender(lambda: PyCyncBackend(creds["username"], creds["password"]), allowed)
+    provider = RecoveringCyncSender(lambda: PyCyncBackend(creds["username"], creds["password"],
+                                          session_path=a.auth_file.parent / "cync-session.json"), allowed)
     try:
         await provider.start()
         worker = CyncWorker(a.socket, allowed, provider.apply_rgb, global_interval=0.25)

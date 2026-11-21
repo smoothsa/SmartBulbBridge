@@ -21,7 +21,9 @@ async def enroll(path: Path):
     print('Cync enrollment uses its vendor service and may disconnect the Cync mobile app.')
     username = input('Cync email: ').strip()
     password = getpass.getpass('Cync password (hidden): ')
-    backend = PyCyncBackend(username, password)
+    backend = PyCyncBackend(username, password,
+                            session_path=path.parent / 'cync-session.json',
+                            use_saved_session=False)
     try:
         try:
             devices = await backend.connect()
@@ -30,11 +32,11 @@ async def enroll(path: Path):
             # Reuse the pending PyCync Auth/session: the emailed code is
             # associated with the original authentication challenge.
             devices = await backend.connect(code)
-        save_credentials(path, username, password)
+        save_credentials(path, username, password, overwrite=True)
         print('Enrollment succeeded. RGB-capable devices discovered:', len(devices))
         for d in devices:
             print(f'  {d["name"]}: {d["id"]}')
-        print('Credentials were saved locally with owner-only permissions.')
+        print('Credentials and the login session were saved locally with owner-only permissions.\n  The plugin can now reconnect after restarts without another emailed code.')
     finally:
         await backend.close()
 

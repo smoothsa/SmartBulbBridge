@@ -68,6 +68,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulbs_json'])) {
 }
 $cfg = file_exists($cfgFile) ? (json_decode(file_get_contents($cfgFile), true) ?: []) : [];
 $bulbs = $cfg['bulbs'] ?? [];
+$found = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['discover'])) {
+    $discOut = [];
+    exec('python3 ' . escapeshellarg(dirname(__FILE__) . '/tools/wiz_discover.py') . ' 2>/dev/null', $discOut);
+    $found = json_decode(implode('', $discOut), true);
+    if (!is_array($found)) { $found = []; }
+}
 $status = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : null;
 $running = $status && (time() - $status['time'] < 10);
 ?>
@@ -83,9 +90,29 @@ covering exactly those channels (Input/Output Setup → Channel Outputs).</p>
 <button class="buttons" onclick="addRow()">Add bulb</button>
 <button class="buttons btn-success" onclick="save()">Save &amp; restart bridge</button>
 <form id="f" method="post"><input type="hidden" name="bulbs_json" id="bj"></form>
+<form method="post" style="display:inline"><button class="buttons" name="discover" value="1">Find WiZ bulbs</button></form>
+<?php if ($found !== null) { ?>
+  <h4 style="margin-top:1em">WiZ bulbs found on your network</h4>
+  <?php if (count($found) === 0) { ?>
+    <p>None answered. Check that <b>Local Communication</b> is enabled in the WiZ app, the bulbs are on, and they are on the same network as FPP.</p>
+  <?php } else { ?>
+    <p>Save any changes above first, because looking for bulbs reloads this page.</p>
+    <table class="table"><thead><tr><th>IP address</th><th>MAC</th><th></th></tr></thead><tbody>
+    <?php foreach ($found as $f) { $ip = htmlspecialchars($f['ip'] ?? ''); $mac = htmlspecialchars($f['mac'] ?? ''); ?>
+      <tr><td><?= $ip ?></td><td><?= $mac ?></td>
+      <td><button class="buttons" type="button" onclick="addRow({protocol:'wiz', enabled:true, ip:'<?= $ip ?>'})">Add as a bulb</button></td></tr>
+    <?php } ?>
+    </tbody></table>
+  <?php } ?>
+<?php } ?>
 </div>
 <script>
 const bulbs = <?= json_encode($bulbs) ?>, st = <?= json_encode($status['bulbs'] ?? []) ?>;
+function nextChannel() {
+  let n = 0;
+  document.querySelectorAll('#t .ch').forEach(i => { const v = parseInt(i.value); if (v > 0 && v + 3 > n) n = v + 3; });
+  return n || '';
+}
 function addRow(b) {
   b = b || {protocol:'wiz', enabled:true};
   const tr = document.createElement('tr');
@@ -94,7 +121,7 @@ function addRow(b) {
   tr.innerHTML = `<td><input type=checkbox class=en ${b.enabled!==false?'checked':''}></td>
    <td><input class=nm size=14 value="${(b.name||'').replace(/"/g,'')}"></td>
    <td><select class=pr><option value=wiz>WiZ</option><option value=matter>Matter</option><option value=cync>Cync</option></select></td>
-   <td><input class=ch type=number min=1 style="width:90px" value="${b.channel||''}"></td>
+   <td><input class=ch type=number min=1 style="width:90px" value="${b.channel||nextChannel()}"></td>
    <td><input class=id size=16 value="${id||''}"></td>
    <td>${s && s.rgb ? 'rgb('+s.rgb+')' : ''}${s && s.fail ? ' ⚠ '+s.last_error : ''}</td>
    <td><button class=buttons onclick="this.closest('tr').remove()">Remove</button></td>`;

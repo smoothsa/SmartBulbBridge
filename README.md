@@ -25,16 +25,16 @@ and every 30 s the current color is re-sent (recovers bulbs that were power-cycl
 | WiZ bulbs | **Tested** on FPP 10.4 (Raspberry Pi): FPP channel output -> bridge -> bulb |
 | Setup page (add/remove/save, input validation) | **Tested** on FPP 10.4 |
 | Matter bulbs | *Experimental.* The command sequence worked against a real bulb and a local Matter server in a standalone test; it has **not** yet been run through the plugin during playback |
-| Cync bulbs | *Experimental.* Worker/session code is unit-tested only; not yet run through the plugin on real hardware |
+| Cync bulbs | **Not usable unattended yet.** Sign-in and device discovery were verified on real hardware, but the plugin does not yet save the Cync session, so it asks for a new emailed code every time it starts. Being fixed |
 | Install through the FPP Plugin Manager | **Not yet tested** |
 
 Not included (and not needed for FSEQ playback): making each bulb its own DDP controller in xLights.
 
 ## Setup
 1. Install from the FPP Plugin Manager (after you publish the repo) or copy this folder to `/home/fpp/media/plugins/SmartBulbBridge`, then run `scripts/fpp_install.sh`.
-2. Restart fppd. Open **Content Setup → Smart Bulbs**, add bulbs, **Save**.
-3. **Input/Output Setup → Channel Outputs**: add a `SmartBulbBridge` output whose start channel/count covers exactly your bulb channels (count must be a multiple of 3).
-4. Test with a sequence that colors those channels.
+2. Open the **Smart Bulbs** page (it appears in the FPP menus). For WiZ bulbs, click **Find WiZ bulbs** to list them on your network and **Add as a bulb**; each bulb gets three FPP channels (the next free block is filled in for you). Click **Save & restart bridge**; the plugin registers its channel output for you.
+3. Click **Restart FPPD** when the page says so.
+4. Test with FPP's Display Testing page (or a sequence) on your bulb channels. In xLights, give each bulb its own 3 channels; the bulbs do not need to be reachable by xLights, because FSEQ playback goes through FPP.
 
 Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/logs/fpp-smart-bulbs.log`.
 
@@ -53,14 +53,21 @@ Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/lo
 `python3 tools/wiz_test.py BULB_IP 255 0 0` sends red straight to one bulb (`0 0 0` = off; `--discover` finds WiZ bulbs). Do this before anything else.
 
 ## Tests
-`python3 tests/test_bridge.py` (14 tests) and `python3 tests/test_cync_support.py` (7, from the pilot). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
+`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (7, from the pilot). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
 
-## Not yet verified (needs your FPP + bulbs)
-- Compiling against real FPP headers and loading in fppd (only built against a mock of `ChannelOutput`).
-- That FPP passes `m_startChannel` 0-based (code assumes this; if the first bulb lights one channel off, adjust `abs` in `SmartBulbOutput.cpp`).
-- `postStart.sh` / `preStop.sh` hook names, `menu.inc` format and `bulbs.php` on your FPP version (PHP not syntax-checked here).
-- The pinned `pycync==0.6.1` / `aiohttp==3.14.5` versions in `bridge/cync_setup.py` (copied from the pilot, unchecked: edit the constants if pip can't find them) and the 3.13 requirement.
-- Matter and Cync with real devices; WiZ with a real bulb.
-- Practical frame rates: WiZ over UDP handles ~10 updates/s per bulb; Cync (cloud) and Matter are much slower.
+## What has been verified, and what has not
+
+Verified on FPP 10.4 (Raspberry Pi 5):
+- Install from GitHub through the FPP Plugin Manager; the native library builds and loads in fppd.
+- FPP starts and stops the bridge daemon; the daemon runs as the FPP user.
+- Setup page: add/remove/save, input validation, automatic channel-output registration.
+- A WiZ bulb follows FPP channel data (Display Testing). FPP's start channel is 0-based and the plugin's channel numbers match.
+- Cync: the private Python environment installs (Python 3.13, `pycync 0.6.1`, `aiohttp 3.14.5`), sign-in with the emailed code works and lists your bulbs.
+
+Not yet verified:
+- Cync during playback, and unattended restarts (see the status table). Cync allows **only one connection per account**, so this plugin cannot run alongside another program that is signed in to the same Cync account.
+- Matter through the plugin (the command sequence works against a real bulb in a standalone test).
+- Other FPP versions and hardware; the plugin declares FPP 10.4 or newer.
+- Practical frame rates: WiZ over UDP handles about 10 updates/s per bulb; Cync (cloud) and Matter are much slower.
 
 License: MIT (see `LICENSE`). Issues: https://github.com/smoothsa/SmartBulbBridge/issues

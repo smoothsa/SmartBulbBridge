@@ -204,5 +204,29 @@ class SyncOutput(unittest.TestCase):
         self.assertEqual(rc, 2); self.assertEqual(outs, [])
 
 
+
+
+class WizDiscover(unittest.IsolatedAsyncioTestCase):
+    async def test_discovers_a_fake_bulb_and_ignores_junk(self):
+        import subprocess, threading
+        sys.path.insert(0, __file__.rsplit("/tests", 1)[0] + "/tools")
+        import wiz_discover as wd
+        srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); srv.bind(("127.0.0.1", 0)); port = srv.getsockname()[1]
+        srv.settimeout(3)
+        def bulb():
+            d, a = srv.recvfrom(1024)
+            srv.sendto(b"not json", a)                                              # junk reply is ignored
+            srv.sendto(json.dumps({"method": "getPilot", "result": {"mac": "aabbccddeeff", "state": True}}).encode(), a)
+        t = threading.Thread(target=bulb); t.start()
+        found = await asyncio.get_running_loop().run_in_executor(None, lambda: wd.discover(["127.0.0.1"], wait=1.0, port=port))
+        t.join(); srv.close()
+        self.assertEqual(found, [{"ip": "127.0.0.1", "mac": "aabbccddeeff"}])
+
+    def test_no_bulbs_gives_empty_list(self):
+        sys.path.insert(0, __file__.rsplit("/tests", 1)[0] + "/tools")
+        import wiz_discover as wd
+        self.assertEqual(wd.discover(["127.0.0.1"], wait=0.3, port=1), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

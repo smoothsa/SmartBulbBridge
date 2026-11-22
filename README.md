@@ -40,20 +40,26 @@ Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/lo
 
 - **WiZ**: needs the bulb's IP (reserve it in DHCP). Add each bulb to the WiZ app first (that is how it joins your Wi-Fi) and enable "Local Communication" there. **Tip:** in the app, set the bulb's fade-in and fade-out to 0. A bulb that was never set up in the app keeps its default fade-out, which showed as roughly 2 seconds of lag when a bulb is switched off at the end of a sequence.
 - **Matter**: you need a Matter controller running on the FPP that exposes the Matter server WebSocket on `ws://127.0.0.1:5580/ws`, with your bulbs already commissioned (the plugin does neither). It was tested with Matter.js Server 1.5.5 on Node.js, with a Wi-Fi bulb commissioned over the Pi's Bluetooth, without Home Assistant or a hub. Enter each bulb's node ID on the setup page (endpoint defaults to 1). `tools/matter_pair.py --check` tests the controller (read-only), and `tools/matter_pair.py --pair` commissions a bulb over Bluetooth and prints its node ID; it asks for the bulb's setup code with hidden input. It was used on two bulbs of one model; `--set-wifi` has never been run. Full notes on the service that was used: `docs/MATTER.md`. The plugin sends On, then hue/saturation, then level.
-- **Cync**: runs as a separate worker in its own Python venv, because `pycync` reportedly needs Python 3.13+. FPP 10.4 ships Python 3.13.5, so `python3` works there; older FPP versions need a newer Python installed first. Run once, as the `fpp` user (not root):
+- **Cync**: set up entirely on the Smart Bulbs page, in the **Cync bulbs** section. It runs as a separate worker in its own private Python environment, because `pycync` needs Python 3.13+ (FPP 10.4 ships it; older FPP versions need a newer Python first).
+  1. Click **Install Cync support** (downloads a few small packages from the internet; a few minutes).
+  2. Enter your Cync email and password and click **Sign in to Cync**. Cync emails you a code the first time; enter it on the page.
+  3. Your color-capable bulbs are listed. Click **Add as a bulb** for each, then **Save & restart bridge**.
+
+  The login session is saved in `cync-session.json` next to `auth.json` (owner-only files) and refreshed automatically. If Cync ever demands a new emailed code (for example after a long outage or a password change) the worker stops (exit 78) instead of retrying; sign in again on the page. Cync allows **only one connection per account**, so signing in can log you out of the Cync phone app. The page is usually served over plain HTTP, so your password crosses your local network unencrypted.
+
+  Command-line alternative (same result), as the `fpp` user:
   ```
   D=/home/fpp/media/plugindata/SmartBulbBridge/cync; mkdir -p $D; chmod 700 $D
   python3 bridge/cync_setup.py --private-dir $D --prepare-with-network-downloads
-  $D/venv/bin/python3 bridge/cync_onboard.py --auth-file $D/auth.json     # asks for email, password, emailed 2FA code
+  $D/venv/bin/python3 bridge/cync_onboard.py --auth-file $D/auth.json
   ```
-  Then add Cync bulbs on the page (device IDs are printed by onboarding). The worker starts with fppd. The login session is saved in `cync-session.json` next to `auth.json` and refreshed automatically. If Cync ever demands a new email code (for example after a long outage or a password change) it stops (exit 78) instead of retrying; re-run onboarding.
 - **Port 4051**, not 4049, so it can coexist with an older WizMatterBridge plugin. Don't map the same channels in both.
 
 ## First test (no FPP needed)
 `python3 tools/wiz_test.py BULB_IP 255 0 0` sends red straight to one bulb (`0 0 0` = off; `--discover` finds WiZ bulbs). Do this before anything else.
 
 ## Tests
-`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (12, including saved-session restore, token rotation and stale-session fallback). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
+`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (13, including saved-session restore, token rotation and stale-session fallback) and `python3 tests/test_cync_web.py` (4, for the page's sign-in helper). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
 
 ## What has been verified, and what has not
 

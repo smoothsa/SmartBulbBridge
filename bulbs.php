@@ -5,6 +5,57 @@ $cfgFile = "$media/config/fpp-smart-bulbs.json";
 $statusFile = "$media/plugindata/SmartBulbBridge/run/status.json";
 $msg = '';
 
+// ---- Cync account setup (install support, sign in, enter emailed code) ----
+$cyncDir = "$media/plugindata/SmartBulbBridge/cync";
+$cyncPy = "$cyncDir/venv/bin/python3";
+$cyncMsg = '';
+function cync_json($f) { return file_exists($f) ? (json_decode(@file_get_contents($f), true) ?: null) : null; }
+function cync_private_write($f, $data) { $old = umask(0077); file_put_contents($f, $data); umask($old); @chmod($f, 0600); }
+function cync_launch($cmd) { exec('nohup ' . $cmd . ' >/dev/null 2>&1 &'); }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cync_action'])) {
+    $act = $_POST['cync_action'];
+    if (!is_dir($cyncDir)) { @mkdir($cyncDir, 0700, true); }
+    @chmod($cyncDir, 0700);
+    if ($act === 'install') {
+        cync_private_write("$cyncDir/install.state", "running\n");
+        cync_launch('bash ' . escapeshellarg(dirname(__FILE__) . '/scripts/cync_install.sh') . ' ' . escapeshellarg($cyncDir));
+        $cyncMsg = 'Installing Cync support. This can take a few minutes.';
+    } elseif ($act === 'login') {
+        $email = trim($_POST['cync_email'] ?? '');
+        $pw = $_POST['cync_password'] ?? '';
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $pw === '' || strlen($pw) > 1024) {
+            $cyncMsg = 'Enter the email address and password of your Cync account.';
+        } elseif (!file_exists($cyncPy)) {
+            $cyncMsg = 'Install Cync support first.';
+        } else {
+            @unlink("$cyncDir/code-request.txt");
+            cync_private_write("$cyncDir/onboard-status.json", json_encode(['state' => 'working', 'message' => 'Starting...']));
+            cync_private_write("$cyncDir/login-request.json", json_encode(['email' => $email, 'password' => $pw]));
+            cync_launch(escapeshellarg($cyncPy) . ' -B ' . escapeshellarg(dirname(__FILE__) . '/bridge/cync_web.py')
+                        . ' --dir ' . escapeshellarg($cyncDir));
+            $cyncMsg = 'Signing in to Cync...';
+        }
+    } elseif ($act === 'code') {
+        $code = trim($_POST['cync_code'] ?? '');
+        if (!preg_match('/^\d{4,8}$/', $code)) { $cyncMsg = 'The code is 4 to 8 digits.'; }
+        else { cync_private_write("$cyncDir/code-request.txt", $code . "\n"); $cyncMsg = 'Checking the code...'; }
+    } elseif ($act === 'forget') {
+        foreach (['auth.json', 'cync-session.json', 'onboard-status.json', 'login-request.json', 'code-request.txt'] as $f) { @unlink("$cyncDir/$f"); }
+        exec('bash ' . escapeshellarg(dirname(__FILE__) . '/scripts/restart.sh') . ' >/dev/null 2>&1');
+        $cyncMsg = 'Cync account removed from this FPP and the bridge was restarted.';
+    }
+}
+$cyncInstalled = file_exists($cyncPy);
+$installState = trim((string)@file_get_contents("$cyncDir/install.state"));
+if ($installState === 'running' && (time() - (int)@filemtime("$cyncDir/install.state")) > 1200) { $installState = 'failed'; }
+$cyncOnb = cync_json("$cyncDir/onboard-status.json");
+if ($cyncOnb && in_array($cyncOnb['state'] ?? '', ['working', 'need_code'], true)
+    && (time() - (int)@filemtime("$cyncDir/onboard-status.json")) > 900) {
+    $cyncOnb = ['state' => 'error', 'message' => 'That sign-in timed out. Please start again.'];
+}
+$cyncAuth = file_exists("$cyncDir/auth.json");
+$cyncBusy = ($installState === 'running') || ($cyncOnb && ($cyncOnb['state'] ?? '') === 'working');
+
 function validate_bulbs($rows, &$err) {
     $out = []; $used = [];
     foreach ($rows as $r) {
@@ -105,8 +156,64 @@ covering exactly those channels (Input/Output Setup → Channel Outputs).</p>
     </tbody></table>
   <?php } ?>
 <?php } ?>
+<hr>
+<h3>Cync bulbs</h3>
+<?php if ($cyncMsg) echo '<div class="alert alert-info">' . htmlspecialchars($cyncMsg) . '</div>'; ?>
+<?php if (!$cyncInstalled) { ?>
+  <?php if ($installState === 'running') { ?>
+    <p>Installing Cync support... this can take a few minutes. This page refreshes by itself.</p>
+  <?php } else { ?>
+    <?php if ($installState === 'failed') { ?>
+      <div class="alert alert-warning">The install did not finish. Last lines of its log:
+      <pre style="white-space:pre-wrap"><?= htmlspecialchars(implode("\n", array_slice(file_exists("$cyncDir/install.log") ? file("$cyncDir/install.log", FILE_IGNORE_NEW_LINES) : [], -6))) ?></pre>
+      It needs FPP 10.4 or newer (Python 3.13) and an internet connection.</div>
+    <?php } ?>
+    <p>Cync bulbs are controlled through the Cync cloud. First, this plugin installs a small private Cync library
+    (downloaded from the internet, not part of FPP's own Python).</p>
+    <form method="post"><button class="buttons" name="cync_action" value="install">Install Cync support</button></form>
+  <?php } ?>
+<?php } else { ?>
+  <?php $onbState = $cyncOnb['state'] ?? ''; ?>
+  <?php if ($onbState === 'need_code') { ?>
+    <p><b>Cync emailed you a verification code.</b> Enter it here:</p>
+    <form method="post"><input name="cync_code" size="10" inputmode="numeric" autocomplete="one-time-code" autofocus>
+      <button class="buttons" name="cync_action" value="code">Submit code</button></form>
+  <?php } elseif ($onbState === 'working') { ?>
+    <p><?= htmlspecialchars($cyncOnb['message'] ?? 'Working...') ?> This page refreshes by itself.</p>
+  <?php } else { ?>
+    <?php if ($onbState === 'error') echo '<div class="alert alert-warning">' . htmlspecialchars($cyncOnb['message'] ?? 'Sign-in failed.') . '</div>'; ?>
+    <?php if ($cyncAuth) { ?>
+      <p>A Cync account is saved on this FPP. To refresh the list of bulbs, sign in again below (Cync may ask for another emailed code).</p>
+    <?php } else { ?>
+      <p>Sign in with the email address and password of your Cync account. Cync allows <b>only one connection per account</b>,
+      so this can sign you out of the Cync phone app, and the plugin cannot run alongside another program that uses the same account.
+      The password is kept in a private file on this FPP and is used to sign in. FPP is usually served over plain HTTP,
+      so it crosses your local network unencrypted.</p>
+    <?php } ?>
+    <form method="post" autocomplete="off">
+      <input type="email" name="cync_email" placeholder="Cync email" size="28">
+      <input type="password" name="cync_password" placeholder="Cync password" size="20" autocomplete="new-password">
+      <button class="buttons" name="cync_action" value="login">Sign in to Cync</button></form>
+  <?php } ?>
+  <?php if ($onbState === 'done' && !empty($cyncOnb['devices'])) { ?>
+    <p><b><?= htmlspecialchars($cyncOnb['message'] ?? '') ?></b> Adding a bulb from this list fills in a new row in the table above. Click <i>Save &amp; restart bridge</i> afterwards.</p>
+    <table class="table"><thead><tr><th>Name in the Cync app</th><th>Device ID</th><th></th></tr></thead><tbody>
+    <?php foreach ($cyncOnb['devices'] as $dv) { $row = ['protocol' => 'cync', 'enabled' => true, 'cync_id' => $dv['id'], 'name' => $dv['name']]; ?>
+      <tr><td><?= htmlspecialchars($dv['name']) ?></td><td><?= htmlspecialchars((string)$dv['id']) ?></td>
+      <td><button class="buttons" type="button" onclick='addRow(<?= htmlspecialchars(json_encode($row), ENT_QUOTES) ?>)'>Add as a bulb</button></td></tr>
+    <?php } ?>
+    </tbody></table>
+  <?php } ?>
+  <?php if ($cyncAuth && !$cyncBusy && $onbState !== 'need_code') { ?>
+    <form method="post" style="margin-top:.5em"><button class="buttons" name="cync_action" value="forget"
+      onclick="return confirm('Remove the saved Cync account from this FPP?')">Forget the saved Cync account</button></form>
+  <?php } ?>
+<?php } ?>
 </div>
 <script>
+<?php if ($cyncBusy) { ?>
+setTimeout(function () { location.replace(location.href); }, 4000);
+<?php } ?>
 const bulbs = <?= json_encode($bulbs) ?>, st = <?= json_encode($status['bulbs'] ?? []) ?>;
 function nextChannel() {
   let n = 0;

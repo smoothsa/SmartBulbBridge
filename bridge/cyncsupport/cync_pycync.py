@@ -176,6 +176,7 @@ class PyCyncBackend:
         self._auth = None
         self._api = None
         self._devices: dict[int, Any] = {}
+        self._on: set[int] = set()   # bulbs we already turned on; skips a cloud call per color change
 
     async def connect(self, code: str | None = None) -> list[dict[str, object]]:
         # PyCync binds the emailed 2FA challenge to the Auth/session instance.
@@ -280,8 +281,11 @@ class PyCyncBackend:
             raise ValueError('Cync device not present in authenticated discovery')
         if rgb == (0, 0, 0):
             await device.turn_off()
+            self._on.discard(device_id)
         else:
-            await device.turn_on()
+            if device_id not in self._on:
+                await device.turn_on()
+                self._on.add(device_id)
             await device.set_rgb(rgb)
         self._persist()
         # This is provider-command acceptance, not physical confirmation.
@@ -295,6 +299,7 @@ class PyCyncBackend:
         self._auth = None
         session, self._session = self._session, None
         self._devices.clear()
+        self._on.clear()
         try:
             if api is not None:
                 await api.shut_down()

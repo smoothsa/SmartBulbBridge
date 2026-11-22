@@ -11,10 +11,14 @@ No network action or login occurs at import or construction time.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter
 from typing import Callable
 
 from .cync_pycync import CyncTwoFactorRequired
+
+
+LOG = logging.getLogger('smart-bulbs-cync')
 
 
 class CyncReauthenticationRequired(RuntimeError):
@@ -95,6 +99,8 @@ class RecoveringCyncSender:
             # Fail only when none of this account's enabled devices can be
             # controlled. Missing IDs remain queued with device-level backoff.
             if self.allowed and not self.allowed.intersection(found):
+                LOG.warning('Cync account has no configured bulb IDs; configured=%s, found=%s',
+                            sorted(self.allowed), sorted(found))
                 raise CyncSessionUnavailable('No configured Cync RGB devices found')
         except asyncio.CancelledError:
             try:
@@ -112,6 +118,8 @@ class RecoveringCyncSender:
             raise CyncReauthenticationRequired(
                 'Cync needs interactive email verification') from exc
         except Exception as exc:
+            LOG.warning('Cync connect failed: %s%s', type(exc).__name__,
+                        f' <- {type(exc.__cause__).__name__}' if exc.__cause__ else '')
             try:
                 await candidate.close()
             except Exception:
@@ -130,6 +138,8 @@ class RecoveringCyncSender:
             if self._replay:
                 self._replay()
         self._connected_once = True
+        LOG.info('Cync connected: %d of %d configured bulbs present',
+                 len(self._present), len(self.allowed))
 
     async def start(self):
         """Initial login/discovery, before starting the socket listener."""
@@ -157,6 +167,8 @@ class RecoveringCyncSender:
                 self.counters['device_errors'] += 1
                 raise CyncDeviceUnavailable('Cync device command unavailable') from exc
             except Exception as exc:
+                LOG.warning('Cync command error: %s%s', type(exc).__name__,
+                            f' <- {type(exc.__cause__).__name__}' if exc.__cause__ else '')
                 self.counters['command_errors'] += 1
                 await self._disconnect()
                 self._cooldown()

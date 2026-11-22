@@ -319,6 +319,20 @@ class SavedSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(load_session(self.sp))
 
 
+class TurnOnOnceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_turn_on_only_when_not_already_on(self):
+        from cyncsupport.cync_pycync import PyCyncBackend
+        calls = []
+        class Dev:
+            async def turn_on(self): calls.append('on')
+            async def turn_off(self): calls.append('off')
+            async def set_rgb(self, rgb): calls.append(rgb)
+        b = PyCyncBackend('u', 'p'); b._devices = {1: Dev()}
+        await b.apply_rgb(1, (1, 2, 3)); await b.apply_rgb(1, (4, 5, 6))
+        await b.apply_rgb(1, (0, 0, 0)); await b.apply_rgb(1, (7, 8, 9))
+        self.assertEqual(calls, ['on', (1, 2, 3), (4, 5, 6), 'off', 'on', (7, 8, 9)])
+
+
 if __name__ == '__main__':
     unittest.main()
 

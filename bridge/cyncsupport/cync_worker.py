@@ -12,12 +12,14 @@ import errno
 import fcntl
 from collections import Counter, deque
 import json
+import logging
 import os
 from pathlib import Path
 import socket
 import stat
 from typing import Awaitable, Callable
 
+LOG = logging.getLogger('smart-bulbs-cync')
 RGB = tuple[int, int, int]
 Apply = Callable[[int, RGB], Awaitable[object]]
 
@@ -254,9 +256,14 @@ class CyncWorker:
                 await asyncio.wait_for(self.apply(device_id, color), timeout=self.timeout)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self.stats['provider_errors'] += 1
                 failures = self._failure.get(device_id, 0) + 1
+                if failures <= 3 or failures % 20 == 0:
+                    cause = exc.__cause__ or exc.__context__
+                    LOG.warning('command for %s failed (attempt %d): %s%s', device_id, failures,
+                                type(exc).__name__,
+                                f' <- {type(cause).__name__}' if cause else '')
                 self._failure[device_id] = failures
                 self._next_due[device_id] = loop.time() + min(
                     self.retry_cap, self.retry_base * 2 ** min(failures-1, 12))
@@ -271,6 +278,8 @@ class CyncWorker:
                 self._failure.pop(device_id, None)
                 self._next_due.pop(device_id, None)
                 self.stats['provider_accepted'] += 1
+                if self.stats['provider_accepted'] <= 3:
+                    LOG.info('command for %s accepted by Cync: %s', device_id, color)
             finally:
                 self.inflight.pop(device_id, None)
             # Revisions arriving while this send was in flight were separately

@@ -50,6 +50,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cync_action'])) {
         $cyncMsg = 'Cync account removed from this FPP and the bridge was restarted.';
     }
 }
+// ---- Matter pairing (uses the Matter controller already running on this FPP) ----
+$matterDir = "$media/plugindata/SmartBulbBridge/matter";
+$matterMsg = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['matter_action']) && $_POST['matter_action'] === 'pair') {
+    if (!is_dir($matterDir)) { @mkdir($matterDir, 0700, true); }
+    @chmod($matterDir, 0700);
+    $mcode = preg_replace('/[\s\-]/', '', trim($_POST['matter_code'] ?? ''));
+    if (!preg_match('/^(\d{11}|\d{21}|MT:[A-Za-z0-9.\-]{1,509})$/', $mcode)) {
+        $matterMsg = 'The setup code should be 11 digits (or the Matter QR text starting MT:).';
+    } else {
+        cync_private_write("$matterDir/matter-status.json", json_encode(['state' => 'working', 'message' => 'Pairing... this can take a minute or two.']));
+        cync_private_write("$matterDir/matter-request.json", json_encode(['code' => $mcode, 'network_only' => empty($_POST['matter_ble'])]));
+        cync_launch('python3 -B ' . escapeshellarg(dirname(__FILE__) . '/bridge/matter_web.py') . ' pair --dir ' . escapeshellarg($matterDir));
+        $matterMsg = 'Pairing started.';
+    }
+}
 $cyncInstalled = file_exists($cyncPy);
 $installState = trim((string)@file_get_contents("$cyncDir/install.state"));
 if ($installState === 'running' && (time() - (int)@filemtime("$cyncDir/install.state")) > 1200) { $installState = 'failed'; }
@@ -161,9 +177,14 @@ covering exactly those channels (Input/Output Setup → Channel Outputs).</p>
     </tbody></table>
   <?php } ?>
 <?php } ?>
+<?php
+$cfgCync = []; $cfgMatter = [];
+foreach ($bulbs as $cb) { if (($cb['protocol'] ?? '') === 'cync') $cfgCync[] = $cb['cync_id'] ?? 0; if (($cb['protocol'] ?? '') === 'matter') $cfgMatter[] = $cb['node_id'] ?? 0; }
+?>
 <hr>
 <h3>Cync bulbs</h3>
 <?php if ($cyncMsg) echo '<div class="alert alert-info">' . htmlspecialchars($cyncMsg) . '</div>'; ?>
+<?php $onbState = $cyncOnb['state'] ?? ''; ?>
 <?php if (!$cyncInstalled) { ?>
   <?php if ($installState === 'running') { ?>
     <p>Installing Cync support... this can take a few minutes. This page refreshes by itself.</p>
@@ -178,7 +199,6 @@ covering exactly those channels (Input/Output Setup → Channel Outputs).</p>
     <form method="post"><button class="buttons" name="cync_action" value="install">Install Cync support</button></form>
   <?php } ?>
 <?php } else { ?>
-  <?php $onbState = $cyncOnb['state'] ?? ''; ?>
   <?php if ($onbState === 'need_code') { ?>
     <p><b>Cync emailed you a verification code.</b> Enter it here:</p>
     <form method="post"><input name="cync_code" size="10" inputmode="numeric" autocomplete="one-time-code" autofocus>
@@ -187,6 +207,21 @@ covering exactly those channels (Input/Output Setup → Channel Outputs).</p>
     <p><?= htmlspecialchars($cyncOnb['message'] ?? 'Working...') ?> This page refreshes by itself.</p>
   <?php } else { ?>
     <?php if ($onbState === 'error') echo '<div class="alert alert-warning">' . htmlspecialchars($cyncOnb['message'] ?? 'Sign-in failed.') . '</div>'; ?>
+    <?php if ($onbState === 'done') {
+        $cyncNew = array_values(array_filter($cyncOnb['devices'] ?? [], function ($dv) use ($cfgCync) { return !in_array($dv['id'], $cfgCync, true); })); ?>
+      <p><b><?= htmlspecialchars($cyncOnb['message'] ?? '') ?></b></p>
+      <?php if (count($cyncNew) === 0) { ?>
+        <p>All of your Cync bulbs are already in the table above.</p>
+      <?php } else { ?>
+        <p>Adding a bulb from this list fills in a new row in the table above. Click <i>Save &amp; restart bridge</i> afterwards.</p>
+        <table class="table"><thead><tr><th>Name in the Cync app</th><th>Device ID</th><th></th></tr></thead><tbody>
+        <?php foreach ($cyncNew as $dv) { $row = ['protocol' => 'cync', 'enabled' => true, 'cync_id' => $dv['id'], 'name' => $dv['name']]; ?>
+          <tr><td><?= htmlspecialchars($dv['name']) ?></td><td><?= htmlspecialchars((string)$dv['id']) ?></td>
+          <td><button class="buttons" type="button" onclick='addRow(<?= htmlspecialchars(json_encode($row), ENT_QUOTES) ?>);this.closest("tr").remove()'>Add as a bulb</button></td></tr>
+        <?php } ?>
+        </tbody></table>
+      <?php } ?>
+    <?php } ?>
     <?php if ($cyncAuth) { ?>
       <p>A Cync account is saved on this FPP. To refresh the list of bulbs, sign in again below (Cync may ask for another emailed code).</p>
     <?php } else { ?>
@@ -200,23 +235,63 @@ covering exactly those channels (Input/Output Setup → Channel Outputs).</p>
       <input type="password" name="cync_password" placeholder="Cync password" size="20" autocomplete="new-password">
       <button class="buttons" name="cync_action" value="login">Sign in to Cync</button></form>
   <?php } ?>
-  <?php if ($onbState === 'done' && !empty($cyncOnb['devices'])) { ?>
-    <p><b><?= htmlspecialchars($cyncOnb['message'] ?? '') ?></b> Adding a bulb from this list fills in a new row in the table above. Click <i>Save &amp; restart bridge</i> afterwards.</p>
-    <table class="table"><thead><tr><th>Name in the Cync app</th><th>Device ID</th><th></th></tr></thead><tbody>
-    <?php foreach ($cyncOnb['devices'] as $dv) { $row = ['protocol' => 'cync', 'enabled' => true, 'cync_id' => $dv['id'], 'name' => $dv['name']]; ?>
-      <tr><td><?= htmlspecialchars($dv['name']) ?></td><td><?= htmlspecialchars((string)$dv['id']) ?></td>
-      <td><button class="buttons" type="button" onclick='addRow(<?= htmlspecialchars(json_encode($row), ENT_QUOTES) ?>)'>Add as a bulb</button></td></tr>
-    <?php } ?>
-    </tbody></table>
-  <?php } ?>
   <?php if ($cyncAuth && !$cyncBusy && $onbState !== 'need_code') { ?>
     <form method="post" style="margin-top:.5em"><button class="buttons" name="cync_action" value="forget"
       onclick="return confirm('Remove the saved Cync account from this FPP?')">Forget the saved Cync account</button></form>
   <?php } ?>
 <?php } ?>
+
+<hr>
+<h3>Matter bulbs</h3>
+<?php
+$matterStatus = cync_json("$matterDir/matter-status.json");
+if ($matterStatus && ($matterStatus['state'] ?? '') === 'working' && (time() - (int)@filemtime("$matterDir/matter-status.json")) > 600) {
+    $matterStatus = ['state' => 'error', 'message' => 'That pairing timed out. Please try again.'];
+}
+if ($matterStatus && ($matterStatus['state'] ?? '') !== 'working' && (time() - (int)@filemtime("$matterDir/matter-status.json")) > 300) {
+    $matterStatus = null;   // old result: stop showing it
+}
+$matterBusy = $matterStatus && ($matterStatus['state'] ?? '') === 'working';
+$mInfo = null;
+if (!$matterBusy) {
+    if (!is_dir($matterDir)) { @mkdir($matterDir, 0700, true); } @chmod($matterDir, 0700);
+    exec('timeout 15 python3 -B ' . escapeshellarg(dirname(__FILE__) . '/bridge/matter_web.py') . ' nodes --dir ' . escapeshellarg($matterDir) . ' >/dev/null 2>&1');
+    $mInfo = cync_json("$matterDir/matter-nodes.json");
+}
+if ($matterMsg) echo '<div class="alert alert-info">' . htmlspecialchars($matterMsg) . '</div>';
+?>
+<?php if ($matterBusy) { ?>
+  <p><?= htmlspecialchars($matterStatus['message'] ?? 'Pairing...') ?> This page refreshes by itself.</p>
+<?php } elseif (!$mInfo || empty($mInfo['ok'])) { ?>
+  <div class="alert alert-warning"><?= htmlspecialchars($mInfo['error'] ?? 'No Matter controller answered.') ?></div>
+  <p>Matter bulbs need a Matter controller running on this FPP (port 5580). The plugin does not install one. See
+  <a href="https://github.com/smoothsa/SmartBulbBridge/blob/main/docs/MATTER.md" target="_blank" rel="noopener">docs/MATTER.md</a> for what worked on one setup.</p>
+<?php } else { ?>
+  <?php if ($matterStatus && ($matterStatus['state'] ?? '') === 'error') echo '<div class="alert alert-warning">' . htmlspecialchars($matterStatus['message'] ?? 'Pairing failed.') . '</div>'; ?>
+  <?php if ($matterStatus && ($matterStatus['state'] ?? '') === 'done') echo '<div class="alert alert-success">' . htmlspecialchars($matterStatus['message'] ?? 'Paired.') . '</div>'; ?>
+  <p>Matter controller: <b><?= htmlspecialchars($mInfo['server'] ?? 'running') ?></b></p>
+  <?php $mNew = array_values(array_filter($mInfo['nodes'] ?? [], function ($n) use ($cfgMatter) { return !in_array($n['node_id'], $cfgMatter, true); })); ?>
+  <?php if (count($mNew) > 0) { ?>
+    <p>Paired bulbs that are not in the table above yet:</p>
+    <table class="table"><thead><tr><th>Name</th><th>Node ID</th><th></th></tr></thead><tbody>
+    <?php foreach ($mNew as $n) { $row = ['protocol' => 'matter', 'enabled' => true, 'node_id' => $n['node_id'], 'endpoint_id' => $n['endpoint_id'], 'name' => $n['name']]; ?>
+      <tr><td><?= htmlspecialchars($n['name']) ?></td><td><?= (int)$n['node_id'] ?></td>
+      <td><button class="buttons" type="button" onclick='addRow(<?= htmlspecialchars(json_encode($row), ENT_QUOTES) ?>);this.closest("tr").remove()'>Add as a bulb</button></td></tr>
+    <?php } ?>
+    </tbody></table>
+  <?php } ?>
+  <p><b>Pair another bulb.</b> The easiest way: set the bulb up in Alexa (or another Matter app) first, ask that app for a code to add the bulb
+  to another app, and paste the code here right away, because it expires after a few minutes.</p>
+  <form method="post" autocomplete="off">
+    <input name="matter_code" size="26" placeholder="11-digit Matter code" inputmode="numeric" autocomplete="off">
+    <?php if (!empty($mInfo['bluetooth'])) { ?>
+      <label style="margin-left:.5em"><input type="checkbox" name="matter_ble" value="1"> New bulb that is not on Wi-Fi yet (pair over Bluetooth)</label>
+    <?php } ?>
+    <button class="buttons" name="matter_action" value="pair">Pair bulb</button></form>
+<?php } ?>
 </div>
 <script>
-<?php if ($cyncBusy) { ?>
+<?php if ($cyncBusy || $matterBusy) { ?>
 setTimeout(function () { location.replace(location.href); }, 4000);
 <?php } ?>
 const bulbs = <?= json_encode($bulbs) ?>, st = <?= json_encode($status['bulbs'] ?? []) ?>;

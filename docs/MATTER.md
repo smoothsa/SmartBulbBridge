@@ -58,6 +58,8 @@ Matter bulbs can be paired to more than one controller. In the app that already 
 
 It asks for the code with hidden input, then pairs over your network. No Bluetooth and no Wi-Fi password are needed. **Tested once:** an OREiN bulb set up with Alexa was paired this way (it got its own node ID) and then followed a sequence. The bulb and the Matter server must be on the same network segment, because the server finds the bulb with multicast DNS, which does not cross subnets.
 
+The same pairing is available on the **Smart Bulbs** page (Matter bulbs section), without a terminal.
+
 Then add the bulb on the **Smart Bulbs** page with type Matter and the node ID that `--pair` printed. The endpoint defaults to 1.
 
 ## What the plugin sends

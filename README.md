@@ -39,7 +39,11 @@ Not included (and not needed for FSEQ playback): making each bulb its own DDP co
 Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/logs/fpp-smart-bulbs.log`.
 
 - **WiZ**: needs the bulb's IP (reserve it in DHCP). Add each bulb to the WiZ app first (that is how it joins your Wi-Fi) and enable "Local Communication" there. **Tip:** in the app, set the bulb's fade-in and fade-out to 0. A bulb that was never set up in the app keeps its default fade-out, which showed as roughly 2 seconds of lag when a bulb is switched off at the end of a sequence.
-- **Matter**: you need a Matter controller running on the FPP that exposes the Matter server WebSocket on `ws://127.0.0.1:5580/ws`, with your bulbs already commissioned (the plugin does neither). It was tested with Matter.js Server 1.5.5 on Node.js, with a Wi-Fi bulb commissioned over the Pi's Bluetooth, without Home Assistant or a hub. Enter each bulb's node ID on the setup page (endpoint defaults to 1). `tools/matter_pair.py --check` tests the controller (read-only), and `tools/matter_pair.py --pair` commissions a bulb over Bluetooth and prints its node ID; it asks for the bulb's setup code with hidden input. It was used on two bulbs of one model; `--set-wifi` has never been run. Full notes on the service that was used: `docs/MATTER.md`. The plugin sends On, then hue/saturation, then level.
+- **Matter**: you need a Matter controller running on the FPP that exposes the Matter server WebSocket on `ws://127.0.0.1:5580/ws`. The plugin does not install one (see `docs/MATTER.md`). It was tested with Matter.js Server 1.5.5 on Node.js, without Home Assistant or a hub. Once it is running, the **Matter bulbs** section of the Smart Bulbs page lists the controller's paired bulbs with an **Add as a bulb** button, and can pair a new bulb:
+  - Easiest: set the bulb up in Alexa (or another Matter app), ask that app for a code to add the bulb to another app, and paste the code into the page right away (it expires after a few minutes). No Bluetooth needed.
+  - A brand-new bulb that is not on Wi-Fi yet can be paired over the Pi's Bluetooth, if the controller has Bluetooth and your Wi-Fi details set (the page shows a checkbox only then).
+
+  The command-line tool `tools/matter_pair.py` does the same from a terminal. Tested on two bulbs of one model; `--set-wifi` has never been run. The plugin sends On, then hue/saturation, then level.
 - **Cync**: set up entirely on the Smart Bulbs page, in the **Cync bulbs** section. It runs as a separate worker in its own private Python environment, because `pycync` needs Python 3.13+ (FPP 10.4 ships it; older FPP versions need a newer Python first).
   1. Click **Install Cync support** (downloads a few small packages from the internet; a few minutes).
   2. Enter your Cync email and password and click **Sign in to Cync**. Cync emails you a code the first time; enter it on the page.
@@ -59,7 +63,7 @@ Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/lo
 `python3 tools/wiz_test.py BULB_IP 255 0 0` sends red straight to one bulb (`0 0 0` = off; `--discover` finds WiZ bulbs). Do this before anything else.
 
 ## Tests
-`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (13, including saved-session restore, token rotation and stale-session fallback) and `python3 tests/test_cync_web.py` (4, for the page's sign-in helper). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
+`python3 tests/test_bridge.py` (21 tests) and `python3 tests/test_cync_support.py` (13, including saved-session restore, token rotation and stale-session fallback) `python3 tests/test_cync_web.py` (4, the page's Cync sign-in helper) and `python3 tests/test_matter_web.py` (7, the page's Matter helper, using a fake server). Bridge tests cover: packet parsing, channel mapping, rate limit / latest-wins, dedupe, malformed packets, retry, isolation between slow and fast bulbs, config validation. Uses a fake WiZ bulb on loopback.
 
 ## What has been verified, and what has not
 

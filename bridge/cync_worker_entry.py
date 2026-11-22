@@ -21,6 +21,15 @@ def cync_ids(config):
             if b.get("protocol") == "cync" and b.get("enabled", True) and type(b.get("cync_id")) is int}
 
 
+def cync_interval(config):
+    """Seconds between Cync cloud commands (all bulbs share it). Default 0.25."""
+    try:
+        v = float(json.loads(Path(config).read_text("utf-8")).get("cync_interval_seconds", 0.25))
+    except (ValueError, TypeError, OSError):
+        return 0.25
+    return min(5.0, max(0.05, v))
+
+
 async def run(a):
     creds = load_credentials(a.auth_file)
     allowed = cync_ids(a.config)
@@ -30,7 +39,7 @@ async def run(a):
                                           session_path=a.auth_file.parent / "cync-session.json"), allowed)
     try:
         await provider.start()
-        worker = CyncWorker(a.socket, allowed, provider.apply_rgb, global_interval=0.25)
+        worker = CyncWorker(a.socket, allowed, provider.apply_rgb, global_interval=cync_interval(a.config))
         provider.set_reconnect_callback(worker.replay_applied)
         try:
             await worker.start()

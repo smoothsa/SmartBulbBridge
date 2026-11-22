@@ -71,3 +71,11 @@ Not yet verified:
 - Practical frame rates: WiZ over UDP handles about 10 updates/s per bulb; Cync (cloud) and Matter are much slower.
 
 License: MIT (see `LICENSE`). Issues: https://github.com/smoothsa/SmartBulbBridge/issues
+
+## Tuning Cync speed
+
+All Cync commands share one cloud connection and are spaced `cync_interval_seconds` apart (default `0.25`). Lower it for faster response, for example `0.1`. Too low and the Cync service may start refusing commands; if the log shows repeated `command ... failed` lines, raise it again. Add it at the top level of `fpp-smart-bulbs.json`, then restart the bridge:
+
+    "cync_interval_seconds": 0.1
+
+The setup page keeps this setting when you save.

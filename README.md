@@ -8,7 +8,7 @@ FPP sequence/playlist ──► SmartBulbBridge channel output (C++, in fppd)
                               ▼
                         bridge/bulbbridge.py  (one small asyncio daemon)
                               ├─► WiZ   : UDP setPilot to bulb IP :38899
-                              ├─► Matter: local python-matter-server WebSocket
+                              ├─► Matter: a local Matter controller's WebSocket (port 5580)
                               └─► Cync  : pycync (cloud)
 ```
 
@@ -22,11 +22,11 @@ and every 30 s the current color is re-sent (recovers bulbs that were power-cycl
 
 | Part | State |
 |---|---|
-| WiZ bulbs | **Tested** on FPP 10.4 (Raspberry Pi): FPP channel output -> bridge -> bulb |
+| WiZ bulbs | **Tested** on FPP 10.4 (Raspberry Pi), including sequence playback |
 | Setup page (add/remove/save, input validation) | **Tested** on FPP 10.4 |
-| Matter bulbs | *Experimental.* Verified through the plugin with hand-sent colors on one real bulb (node 5) and a local Matter server. Not yet verified during sequence playback |
-| Cync bulbs | **Experimental.** Sign-in and device discovery verified on real hardware. The plugin now saves the login session (owner-only file) so restarts should not need a new emailed code. This is covered by offline tests only; not yet proven on real hardware over a long run |
-| Install through the FPP Plugin Manager | **Not yet tested** |
+| Matter bulbs | **Tested on two bulbs** (the same Wi-Fi Matter RGBTW model) during sequence playback, using Matter.js Server 1.5.5. Other controllers and bulbs are untested. The plugin does **not** install a Matter controller or commission bulbs for you (see Setup) |
+| Cync bulbs | **Tested** with five bulbs during sequence playback. The login session is saved, and bridge restarts reconnected without a new emailed code in repeated tests. Not yet tested over a multi-hour unattended run |
+| Install through the FPP Plugin Manager | **Tested** by pasting this repository's GitHub URL. Not yet in the official catalog |
 
 Not included (and not needed for FSEQ playback): making each bulb its own DDP controller in xLights.
 
@@ -38,8 +38,8 @@ Not included (and not needed for FSEQ playback): making each bulb its own DDP co
 
 Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/logs/fpp-smart-bulbs.log`.
 
-- **WiZ**: needs the bulb's IP (reserve it in DHCP). Enable "Local Communication" in the WiZ app.
-- **Matter**: run `python-matter-server` on the Pi (ws://127.0.0.1:5580/ws), commission bulbs there, enter each bulb's node ID.
+- **WiZ**: needs the bulb's IP (reserve it in DHCP). Add each bulb to the WiZ app first (that is how it joins your Wi-Fi) and enable "Local Communication" there. **Tip:** in the app, set the bulb's fade-in and fade-out to 0. A bulb that was never set up in the app keeps its default fade-out, which showed as roughly 2 seconds of lag when a bulb is switched off at the end of a sequence.
+- **Matter**: you need a Matter controller running on the FPP that exposes the Matter server WebSocket on `ws://127.0.0.1:5580/ws`, with your bulbs already commissioned (the plugin does neither). It was tested with Matter.js Server 1.5.5 on Node.js, with a Wi-Fi bulb commissioned over the Pi's Bluetooth, without Home Assistant or a hub. Enter each bulb's node ID on the setup page (endpoint defaults to 1). `tools/matter_pair.py --check` tests the controller (read-only), and `tools/matter_pair.py --pair` commissions a bulb over Bluetooth and prints its node ID; it asks for the bulb's setup code with hidden input. It was used on two bulbs of one model; `--set-wifi` has never been run. Full notes on the service that was used: `docs/MATTER.md`. The plugin sends On, then hue/saturation, then level.
 - **Cync**: runs as a separate worker in its own Python venv, because `pycync` reportedly needs Python 3.13+. FPP 10.4 ships Python 3.13.5, so `python3` works there; older FPP versions need a newer Python installed first. Run once, as the `fpp` user (not root):
   ```
   D=/home/fpp/media/plugindata/SmartBulbBridge/cync; mkdir -p $D; chmod 700 $D
@@ -57,16 +57,17 @@ Config is `media/config/fpp-smart-bulbs.json` (see `examples/`). Logs: `media/lo
 
 ## What has been verified, and what has not
 
-Verified on FPP 10.4 (Raspberry Pi 5):
+Verified on FPP 10.4 (Raspberry Pi):
 - Install from GitHub through the FPP Plugin Manager; the native library builds and loads in fppd.
 - FPP starts and stops the bridge daemon; the daemon runs as the FPP user.
 - Setup page: add/remove/save, input validation, automatic channel-output registration.
 - A WiZ bulb follows FPP channel data (Display Testing). FPP's start channel is 0-based and the plugin's channel numbers match.
-- Cync: the private Python environment installs (Python 3.13, `pycync 0.6.1`, `aiohttp 3.14.5`), sign-in with the emailed code works and lists your bulbs.
+- Cync: the private Python environment installs (Python 3.13, `pycync 0.6.1`, `aiohttp 3.14.5`), sign-in with the emailed code works and lists your bulbs, five bulbs follow a sequence, and restarts reuse the saved session.
+- Matter: one bulb follows a sequence through the plugin.
 
 Not yet verified:
-- Cync during playback, and unattended restarts (see the status table). Cync allows **only one connection per account**, so this plugin cannot run alongside another program that is signed in to the same Cync account.
-- Matter during sequence playback (it works with hand-sent colors through the plugin).
+- A multi-hour unattended Cync run. Cync allows **only one connection per account**, so this plugin cannot run alongside another program that is signed in to the same Cync account.
+- Matter with controllers other than Matter.js Server, with other bulb models, and with many bulbs at once.
 - Other FPP versions and hardware; the plugin declares FPP 10.4 or newer.
 - Practical frame rates: WiZ over UDP handles about 10 updates/s per bulb; Cync (cloud) and Matter are much slower.
 

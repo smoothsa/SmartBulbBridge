@@ -228,10 +228,20 @@ class Bridge:
                 await asyncio.wait_for(self.senders[s.bulb["protocol"]](s.bulb, rgb), 8)
                 s.delivered, s.sent_at, backoff = rgb, time.monotonic(), 0.5
                 s.ok += 1
+                s.first_fail = None
             except Exception as e:
                 s.fail += 1
                 s.last_error = f"{type(e).__name__}: {e}"[:200]
-                if s.fail <= 3 or s.fail % 100 == 0:
+                now = time.monotonic()
+                if getattr(s, "first_fail", None) is None:
+                    s.first_fail = now
+                # The Cync worker opens its socket about a second after the bridge
+                # starts; that is a normal start-up wait, not worth logging unless
+                # it lasts.
+                starting = (s.bulb["protocol"] == "cync" and
+                            isinstance(e, (FileNotFoundError, ConnectionRefusedError)) and
+                            now - s.first_fail < 20)
+                if not starting and (s.fail <= 3 or s.fail % 100 == 0):
                     self.log(f"{s.bulb['name']}: send failed ({s.last_error})")
                 s.event.set()                        # retry with latest value
                 await asyncio.sleep(backoff)

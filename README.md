@@ -24,7 +24,7 @@ and every 30 s the current color is re-sent (recovers bulbs that were power-cycl
 |---|---|
 | WiZ bulbs | **Tested** on FPP 10.4 (Raspberry Pi): FPP channel output -> bridge -> bulb |
 | Setup page (add/remove/save, input validation) | **Tested** on FPP 10.4 |
-| Matter bulbs | *Experimental.* The command sequence worked against a real bulb and a local Matter server in a standalone test; it has **not** yet been run through the plugin during playback |
+| Matter bulbs | *Experimental.* Verified through the plugin with hand-sent colors on one real bulb (node 5) and a local Matter server. Not yet verified during sequence playback |
 | Cync bulbs | **Experimental.** Sign-in and device discovery verified on real hardware. The plugin now saves the login session (owner-only file) so restarts should not need a new emailed code. This is covered by offline tests only; not yet proven on real hardware over a long run |
 | Install through the FPP Plugin Manager | **Not yet tested** |
 
@@ -66,7 +66,7 @@ Verified on FPP 10.4 (Raspberry Pi 5):
 
 Not yet verified:
 - Cync during playback, and unattended restarts (see the status table). Cync allows **only one connection per account**, so this plugin cannot run alongside another program that is signed in to the same Cync account.
-- Matter through the plugin (the command sequence works against a real bulb in a standalone test).
+- Matter during sequence playback (it works with hand-sent colors through the plugin).
 - Other FPP versions and hardware; the plugin declares FPP 10.4 or newer.
 - Practical frame rates: WiZ over UDP handles about 10 updates/s per bulb; Cync (cloud) and Matter are much slower.
 

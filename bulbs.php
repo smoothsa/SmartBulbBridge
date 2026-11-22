@@ -38,7 +38,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cync_action'])) {
     } elseif ($act === 'code') {
         $code = trim($_POST['cync_code'] ?? '');
         if (!preg_match('/^\d{4,8}$/', $code)) { $cyncMsg = 'The code is 4 to 8 digits.'; }
-        else { cync_private_write("$cyncDir/code-request.txt", $code . "\n"); $cyncMsg = 'Checking the code...'; }
+        else {
+            // mark "working" first, so the page shows progress and refreshes itself; the helper rewrites it
+            cync_private_write("$cyncDir/onboard-status.json", json_encode(['state' => 'working', 'message' => 'Checking the code...']));
+            cync_private_write("$cyncDir/code-request.txt", $code . "\n");
+            $cyncMsg = 'Checking the code...';
+        }
     } elseif ($act === 'forget') {
         foreach (['auth.json', 'cync-session.json', 'onboard-status.json', 'login-request.json', 'code-request.txt'] as $f) { @unlink("$cyncDir/$f"); }
         exec('bash ' . escapeshellarg(dirname(__FILE__) . '/scripts/restart.sh') . ' >/dev/null 2>&1');
